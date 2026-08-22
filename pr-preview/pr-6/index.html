@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Perfetto Trace Query (vanilla)</title>
+    <script type="module" crossorigin src="./assets/index-Bu8fVTT5.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cl-DI7hb.css">
+  </head>
+  <body>
+    <main>
+      <h1>Perfetto trace query — vanilla demo</h1>
+      <p class="subtitle">
+        Loads a trace with Perfetto's trace_processor wasm and runs SQL
+        against it, no framework.
+        <a href="./svelte/">Svelte demo →</a>
+      </p>
+
+      <section>
+        <label for="trace-file">Trace file</label>
+        <input id="trace-file" type="file" />
+        <span id="trace-status"></span>
+      </section>
+
+      <section>
+        <label for="sql">SQL query</label>
+        <textarea id="sql" rows="4">select name from slice limit 10</textarea>
+        <button id="run-query" type="button">Run query</button>
+      </section>
+
+      <section>
+        <table id="results"></table>
+      </section>
+    </main>
+  </body>
+</html>
