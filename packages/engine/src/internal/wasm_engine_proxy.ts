@@ -7,8 +7,13 @@
 import {assertTrue} from './assert';
 import {EngineBase} from './engine_base';
 
+// Absolute, not relative to import.meta.env.BASE_URL: the worker fetches
+// this itself, resolving any relative URL against its own script location
+// (e.g. /assets/worker-*.js), not the page's — so a plain relative path
+// computed here would resolve to the wrong place once it crosses into the
+// worker.
 function assetUrl(name: string): string {
-  return `${import.meta.env.BASE_URL}${name}`;
+  return new URL(`${import.meta.env.BASE_URL}${name}`, location.href).href;
 }
 
 export class WasmEngineProxy extends EngineBase {
