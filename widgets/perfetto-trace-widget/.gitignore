@@ -1,0 +1,7 @@
+js/node_modules/
+__pycache__/
+*.egg-info/
+.venv/
+dist/
+build/
+*.perfetto_trace

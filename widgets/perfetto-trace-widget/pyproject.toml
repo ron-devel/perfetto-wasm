@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "perfetto-trace-widget"
+version = "0.1.0"
+description = "Load a Perfetto trace in the browser (trace_processor.wasm) and query it into a pandas DataFrame, from Python — works in fully client-side notebooks (e.g. marimo's `export html-wasm`)."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+dependencies = [
+    "anywidget>=0.9",
+    "traitlets>=5.0",
+    "pandas>=1.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/ron-devel/perfetto-wasm/tree/main/widgets/perfetto-trace-widget"
+Source = "https://github.com/ron-devel/perfetto-wasm"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/perfetto_trace_widget"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/perfetto_trace_widget",
+    "README.md",
+]
