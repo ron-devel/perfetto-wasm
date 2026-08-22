@@ -51,12 +51,21 @@ export class WasmBridge {
   private lastStderr: string[] = [];
   private messagePort?: MessagePort;
 
-  // |wasmJsUrl| is loaded via a runtime dynamic import rather than a
-  // bundled static one, because it's populated by a separate CI pipeline
-  // (vendor-wasm.yml) — see packages/engine's README for why. |wasmModule|
-  // is compiled once on the main thread (wasm_engine_proxy.ts) so V8 can
-  // reuse the same tiered-up wasm code if more than one worker is ever
-  // spawned.
+  // |wasmJsUrl| is fetched and loaded manually rather than through a
+  // bundled or dynamic `import()`, for two reasons: (1) it's populated by a
+  // separate CI pipeline (vendor-wasm.yml) — see packages/engine's README
+  // for why — so it may not exist at build time, and (2) Emscripten's
+  // `-sMODULARIZE` output here is a plain UMD script (`if (typeof exports
+  // === 'object' && typeof module === 'object') module.exports = ...`),
+  // not an ES module with a real `export` statement — native `import()`
+  // would parse it fine but see zero exports, since browsers don't do
+  // CommonJS interop for module scripts. We load it the way `require()`
+  // would: run the script text as a function body with our own `module`/
+  // `exports` objects and read back what it assigned to them.
+  //
+  // |wasmModule| is compiled once on the main thread (wasm_engine_proxy.ts)
+  // so V8 can reuse the same tiered-up wasm code if more than one worker is
+  // ever spawned.
   async initialize(
     port: MessagePort,
     wasmJsUrl: string,
@@ -65,10 +74,7 @@ export class WasmBridge {
     assertTrue(this.messagePort === undefined);
     this.messagePort = port;
 
-    const mod: {default: TraceProcessorModuleFactory} = await import(
-      /* @vite-ignore */ wasmJsUrl
-    );
-    const initModule = mod.default;
+    const initModule = await this.loadModuleFactory(wasmJsUrl);
     const connection = await initModule({
       locateFile: (s: string) => s,
       print: (line: string) => console.log(line),
@@ -96,6 +102,24 @@ export class WasmBridge {
     // Setting .onmessage implicitly calls port.start() and flushes any
     // messages queued while we were awaiting module initialization.
     port.onmessage = this.onMessage.bind(this);
+  }
+
+  // Fetches trace_processor.js and extracts its UMD `module.exports` — see
+  // the comment on initialize() for why this can't just be `import()`ed.
+  private async loadModuleFactory(
+    wasmJsUrl: string,
+  ): Promise<TraceProcessorModuleFactory> {
+    const src = await (await fetch(wasmJsUrl)).text();
+    const moduleObj: {exports: {default?: TraceProcessorModuleFactory}} = {
+      exports: {},
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const runUmd = new Function('module', 'exports', src);
+    runUmd(moduleObj, moduleObj.exports);
+    return ensureExists(
+      moduleObj.exports.default,
+      `${wasmJsUrl} did not assign module.exports.default — its UMD wrapper may have changed`,
+    );
   }
 
   private onMessage(msg: MessageEvent) {
