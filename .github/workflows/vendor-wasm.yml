@@ -1,0 +1,138 @@
+name: Vendor trace_processor.wasm
+
+# Rebuilds vendor/trace_processor/ from the upstream google/perfetto
+# revision pinned in vendor/PERFETTO_REV, and opens a PR with the result.
+# This is deliberately NOT run on every push: building trace_processor.wasm
+# needs a full Clang/emsdk toolchain (tools/install-build-deps --ui) and
+# takes 20-60+ minutes even with caching, so it only runs when someone
+# decides to bump the pinned revision.
+#
+# To bump the pin: edit vendor/PERFETTO_REV, then run this workflow
+# (workflow_dispatch) or push that change and trigger it manually.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  PERFETTO_OUT_DIR: perfetto-src/out/wasm
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout perfetto-wasm
+        uses: actions/checkout@v4
+        with:
+          path: perfetto-wasm
+
+      - name: Read pinned perfetto revision
+        id: pin
+        run: echo "sha=$(cat perfetto-wasm/vendor/PERFETTO_REV)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout google/perfetto @ pinned revision
+        uses: actions/checkout@v4
+        with:
+          repository: google/perfetto
+          ref: ${{ steps.pin.outputs.sha }}
+          path: perfetto-src
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          docker-images: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cache buildtools (clang/emsdk/etc.)
+        uses: actions/cache@v4
+        with:
+          path: perfetto-src/buildtools
+          key: buildtools-${{ runner.os }}-${{ steps.pin.outputs.sha }}
+
+      - name: Cache ccache objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ steps.pin.outputs.sha }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ steps.pin.outputs.sha }}-
+            ccache-${{ runner.os }}-
+
+      - name: Install ccache
+        run: sudo apt-get update && sudo apt-get install -y ccache
+
+      - name: Install build deps (--ui)
+        working-directory: perfetto-src
+        run: tools/install-build-deps --ui --no-dev-tools
+
+      - name: gn gen
+        working-directory: perfetto-src
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: tools/gn gen out/wasm --args='is_debug=false cc_wrapper="ccache"'
+
+      - name: ninja trace_processor_wasm
+        working-directory: perfetto-src
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: tools/ninja -C out/wasm trace_processor_wasm
+
+      - name: Generate protobufjs bindings
+        working-directory: perfetto-src
+        run: |
+          mkdir -p out/wasm/protos_gen
+          npx --yes protobufjs-cli pbjs \
+            --no-beautify --force-number --no-delimited --no-verify \
+            -t static-module -w es6 \
+            -p . \
+            -o out/wasm/protos_gen/protos.js \
+            protos/perfetto/ipc/consumer_port.proto \
+            protos/perfetto/ipc/wire_protocol.proto \
+            protos/perfetto/trace/perfetto/perfetto_metatrace.proto \
+            protos/perfetto/perfetto_sql/structured_query.proto \
+            protos/perfetto/trace_processor/trace_processor.proto
+          npx --yes protobufjs-cli pbts \
+            --no-comments -p . \
+            -o out/wasm/protos_gen/protos.d.ts \
+            out/wasm/protos_gen/protos.js
+
+      - name: Assemble vendor/trace_processor
+        run: |
+          set -eu
+          sha="${{ steps.pin.outputs.sha }}"
+          short="${sha:0:12}"
+          dest="perfetto-wasm/vendor/trace_processor/$short"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          cp "$PERFETTO_OUT_DIR/wasm/trace_processor.wasm" "$dest/"
+          cp "$PERFETTO_OUT_DIR/wasm/trace_processor.js" "$dest/"
+          cp "$PERFETTO_OUT_DIR/wasm/trace_processor.d.ts" "$dest/"
+          cp "$PERFETTO_OUT_DIR/protos_gen/protos.js" "$dest/"
+          cp "$PERFETTO_OUT_DIR/protos_gen/protos.d.ts" "$dest/"
+          echo "$sha" > "$dest/PERFETTO_REV"
+          rm -f perfetto-wasm/vendor/trace_processor/.gitkeep
+          echo "VENDOR_DIR=vendor/trace_processor/$short" >> "$GITHUB_ENV"
+
+      - name: Open PR with vendored artifact
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: perfetto-wasm
+          branch: vendor-wasm/${{ steps.pin.outputs.sha }}
+          commit-message: "vendor: trace_processor.wasm @ ${{ steps.pin.outputs.sha }}"
+          title: "vendor: trace_processor.wasm @ ${{ steps.pin.outputs.sha }}"
+          body: |
+            Built from google/perfetto@${{ steps.pin.outputs.sha }} by the
+            vendor-wasm workflow.
+
+            Adds `${{ env.VENDOR_DIR }}`. Once merged, update
+            `packages/engine` to point at this directory if the path changed.
+          add-paths: |
+            vendor/trace_processor/**
