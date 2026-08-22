@@ -85,41 +85,14 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
         run: tools/ninja -C out/wasm trace_processor_wasm
 
-      - name: Generate protobufjs bindings
-        working-directory: perfetto-src
-        run: |
-          mkdir -p out/wasm/protos_gen
-          npx --yes protobufjs-cli pbjs \
-            --no-beautify --force-number --no-delimited --no-verify \
-            -t static-module -w es6 \
-            -p . \
-            -o out/wasm/protos_gen/protos.js \
-            protos/perfetto/ipc/consumer_port.proto \
-            protos/perfetto/ipc/wire_protocol.proto \
-            protos/perfetto/trace/perfetto/perfetto_metatrace.proto \
-            protos/perfetto/perfetto_sql/structured_query.proto \
-            protos/perfetto/trace_processor/trace_processor.proto
-          npx --yes protobufjs-cli pbts \
-            --no-comments -p . \
-            -o out/wasm/protos_gen/protos.d.ts \
-            out/wasm/protos_gen/protos.js
-
       - name: Assemble vendor/trace_processor
         run: |
           set -eu
-          sha="${{ steps.pin.outputs.sha }}"
-          short="${sha:0:12}"
-          dest="perfetto-wasm/vendor/trace_processor/$short"
-          rm -rf "$dest"
+          dest="perfetto-wasm/vendor/trace_processor"
+          rm -f "$dest"/*.wasm "$dest"/*.js "$dest/.gitkeep"
           mkdir -p "$dest"
           cp "$PERFETTO_OUT_DIR/wasm/trace_processor.wasm" "$dest/"
           cp "$PERFETTO_OUT_DIR/wasm/trace_processor.js" "$dest/"
-          cp "$PERFETTO_OUT_DIR/wasm/trace_processor.d.ts" "$dest/"
-          cp "$PERFETTO_OUT_DIR/protos_gen/protos.js" "$dest/"
-          cp "$PERFETTO_OUT_DIR/protos_gen/protos.d.ts" "$dest/"
-          echo "$sha" > "$dest/PERFETTO_REV"
-          rm -f perfetto-wasm/vendor/trace_processor/.gitkeep
-          echo "VENDOR_DIR=vendor/trace_processor/$short" >> "$GITHUB_ENV"
 
       - name: Open PR with vendored artifact
         uses: peter-evans/create-pull-request@v7
@@ -129,10 +102,8 @@ jobs:
           commit-message: "vendor: trace_processor.wasm @ ${{ steps.pin.outputs.sha }}"
           title: "vendor: trace_processor.wasm @ ${{ steps.pin.outputs.sha }}"
           body: |
-            Built from google/perfetto@${{ steps.pin.outputs.sha }} by the
-            vendor-wasm workflow.
-
-            Adds `${{ env.VENDOR_DIR }}`. Once merged, update
-            `packages/engine` to point at this directory if the path changed.
+            Built from google/perfetto@${{ steps.pin.outputs.sha }} (pinned
+            in vendor/PERFETTO_REV) by the vendor-wasm workflow. Updates
+            vendor/trace_processor/trace_processor.{wasm,js}.
           add-paths: |
             vendor/trace_processor/**
