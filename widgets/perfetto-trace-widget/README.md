@@ -10,13 +10,20 @@ many independent queries as you like against the same loaded trace: each
 gets its own query id and its own DataFrame, so none of them overwrite each
 other.
 
-That "no server" property is the whole point: this widget works inside
+That "no server" property is the whole point: this widget is designed to
+work inside
 [marimo's `export html-wasm`](https://docs.marimo.io/guides/exporting/#export-to-wasm-powered-html)
 (a notebook exported to a fully client-side page — Python itself runs via
-Pyodide, no backend at all) exactly as well as it works in a normal
-Jupyter/marimo session with a real Python process. Both the notebook's
-Python *and* the trace query engine end up running as WebAssembly in the
-same browser tab.
+Pyodide, no backend at all) just as well as it works in a normal
+Jupyter/marimo session with a real Python process, with both the
+notebook's Python *and* the trace query engine ending up running as
+WebAssembly in the same browser tab. There's one catch today: Pyodide
+installs packages via micropip from PyPI, and this package isn't
+published there yet, so a plain `from perfetto_trace_widget import
+PerfettoTraceWidget` won't resolve inside an export. See
+[`examples/marimo_demo_wasm.py`](examples/marimo_demo_wasm.py) for the
+workaround (a generated, dependency-free sibling module with the built
+`widget.js` inlined) until this is published.
 
 This package is self-contained and independent of the rest of the
 [`perfetto-wasm`](https://github.com/ron-devel/perfetto-wasm) monorepo it
@@ -92,8 +99,19 @@ own click triggered. Guard the call with `if button.value:` and only set
 the state inside that block, so a later, unrelated rerun leaves the
 previously-set id alone. See
 [`examples/marimo_demo.py`](examples/marimo_demo.py) for a complete
-notebook using this pattern for two independent queries, including how to
-`marimo export html-wasm` it into a fully static, shareable page.
+notebook using this pattern for two independent queries.
+
+To turn that into a fully static, shareable page with `marimo export
+html-wasm`, use [`examples/marimo_demo_wasm.py`](examples/marimo_demo_wasm.py)
+instead -- same notebook, but importing `PerfettoTraceWidget` from a
+generated sibling module instead of the real package (see that file's
+intro cell, and [`generate_inline_widget.py`](examples/generate_inline_widget.py)'s
+docstring, for why: this package isn't on PyPI yet, and Pyodide's
+in-browser package installer only installs from PyPI). `marimo export
+html-wasm` itself takes care of the rest: it detects that sibling-module
+import, builds a wheel from it on the fly, and embeds it under the
+exported page's own `public/wheels/` -- so the export is still fully
+self-contained, no separate hosting step required.
 
 ### Configuring where the wasm comes from
 
@@ -117,6 +135,15 @@ pip install -e .
 The built `widget.js` is committed (not generated at install time) so
 `pip install` doesn't require Node.js — rebuild it with the commands above
 after editing anything under `js/src/`.
+
+`examples/_perfetto_trace_widget_inline.py` (used by
+`examples/marimo_demo_wasm.py`, see [marimo](#marimo) above) is also
+generated and committed -- regenerate it too after rebuilding `widget.js`
+or editing `widget.py`:
+
+```sh
+python examples/generate_inline_widget.py
+```
 
 `js/src/engine/` is a deliberate copy of this monorepo's
 `packages/engine/src/internal` (the trace_processor RPC client), not a
