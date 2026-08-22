@@ -1,24 +1,84 @@
 // anywidget entrypoint: https://anywidget.dev — `export default {render}`,
 // where `render({model, el})` mounts into the widget's output DOM node and
-// talks to Python via `model.get/set/on/save_changes`.
+// talks to Python via `model.get/set/on/save_changes` (state) and
+// `model.send`/`model.on('msg:custom', ...)` (commands).
 //
 // UI lives entirely here (a file input + status line): only the browser can
 // pick a File, so trace loading is user-driven from JS. Querying is
-// Python-driven: PerfettoTraceWidget.run_query() (see widget.py) bumps the
-// `_query_seq` trait, which this file watches and reacts to by running
-// `sql` against the loaded trace and writing the result back into
-// `columns_json` / `row_count` / `error` — those changes flow back to
-// Python as ordinary trait updates, which is what makes
-// `mo.ui.anywidget(widget)` (marimo) or plain ipywidgets re-run dependent
-// cells once the query actually finishes.
+// Python-driven and keyed by query_id, not shared single-slot state:
+// PerfettoTraceWidget.run_query() (see widget.py) sends a `run_query`
+// custom message with a fresh id, this file runs it and writes the result
+// into `results_json[query_id]` — never overwriting another query's
+// still-live result — which flows back to Python as a `results_json` trait
+// update. That's what lets a notebook fire off several queries and read
+// each one's own DataFrame independently, and what makes
+// `mo.ui.anywidget(widget)` (marimo) re-run dependent cells once a query
+// actually finishes.
+//
+// Each column also carries a `dtype` ('int64' | 'float64' | 'string' |
+// 'bytes' | 'object'), inferred from the actual JS runtime type of its
+// (decoded) cells -- see classifyColumn() -- so widget.py can build a
+// properly-typed DataFrame instead of guessing post-hoc.
 
-import {createEngine, DEFAULT_WASM_BASE_URL, type TraceEngine} from './perfetto_engine';
+import {createEngine, DEFAULT_WASM_BASE_URL, type SqlValue, type TraceEngine} from './perfetto_engine';
 
 interface AnyModel {
   get(key: string): unknown;
   set(key: string, value: unknown): void;
   save_changes(): void;
-  on(event: string, callback: () => void): void;
+  on(event: string, callback: (...args: unknown[]) => void): void;
+}
+
+interface RunQueryMessage {
+  type: 'run_query';
+  query_id: string;
+  sql: string;
+}
+
+type ColumnDtype = 'int64' | 'float64' | 'string' | 'bytes' | 'object';
+
+interface SerializedColumn {
+  name: string;
+  dtype: ColumnDtype;
+  // bigint -> string (JSON has no bigint), Uint8Array -> number[] (JSON has
+  // no bytes type), everything else passes through as-is.
+  values: ReadonlyArray<string | number | boolean | null | number[]>;
+}
+
+// A column's dtype is the JS runtime type shared by all its non-null
+// cells; a column with mixed cell types (SQLite's dynamic typing allows a
+// column to hold different types per row) or with no non-null cells at
+// all falls back to 'object'.
+function classifyColumn(values: ReadonlyArray<SqlValue>): ColumnDtype {
+  let seen: ColumnDtype | undefined;
+  for (const v of values) {
+    if (v === null) continue;
+    const kind: ColumnDtype =
+      typeof v === 'bigint'
+        ? 'int64'
+        : typeof v === 'number'
+          ? 'float64'
+          : typeof v === 'string'
+            ? 'string'
+            : v instanceof Uint8Array
+              ? 'bytes'
+              : 'object';
+    if (seen === undefined) seen = kind;
+    else if (seen !== kind) return 'object';
+  }
+  return seen ?? 'object';
+}
+
+function serializeColumns(
+  columns: ReadonlyArray<{name: string; values: ReadonlyArray<SqlValue>}>,
+): SerializedColumn[] {
+  return columns.map((c) => ({
+    name: c.name,
+    dtype: classifyColumn(c.values),
+    values: c.values.map((v) =>
+      typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? Array.from(v) : v,
+    ),
+  }));
 }
 
 function render({model, el}: {model: AnyModel; el: HTMLElement}) {
@@ -69,7 +129,7 @@ function render({model, el}: {model: AnyModel; el: HTMLElement}) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await eng.parse(bytes);
       await eng.notifyEof();
-      setStatus(`Loaded ${file.name}. Set .sql (or call run_query()) from Python to query it.`);
+      setStatus(`Loaded ${file.name}. Call run_query() from Python to query it.`);
       model.set('error', '');
       model.save_changes();
     } catch (err) {
@@ -78,40 +138,48 @@ function render({model, el}: {model: AnyModel; el: HTMLElement}) {
     }
   });
 
-  async function runQuery() {
-    const sql = model.get('sql') as string;
-    if (!sql) return;
-    setStatus('Running query…');
+  // Merges one query's outcome into the results dict without touching any
+  // other query_id's entry -- the whole point of keying by query_id.
+  function setResult(
+    queryId: string,
+    entry: {columns: SerializedColumn[]; row_count: number; error: string | null},
+  ) {
+    const current = JSON.parse((model.get('results_json') as string) || '{}') as Record<
+      string,
+      unknown
+    >;
+    current[queryId] = entry;
+    model.set('results_json', JSON.stringify(current));
+    model.save_changes();
+  }
+
+  async function runQuery(queryId: string, sql: string) {
+    setStatus(`Running ${queryId}…`);
     try {
       const eng = await getEngine();
       const result = await eng.query(sql);
-      // JSON has no bigint; trace_processor's 64-bit int columns come back
-      // as bigint, so stringify those. Blob columns become plain number
-      // arrays (JSON has no bytes type either).
-      const columns = result.columns.map((c) => ({
-        name: c.name,
-        values: c.values.map((v) =>
-          typeof v === 'bigint'
-            ? v.toString()
-            : v instanceof Uint8Array
-              ? Array.from(v)
-              : v,
-        ),
-      }));
-      model.set('columns_json', JSON.stringify(columns));
-      model.set('row_count', result.rowCount);
-      model.set('error', '');
-      setStatus(`${result.rowCount} row(s).`);
-      model.save_changes();
+      setResult(queryId, {
+        columns: serializeColumns(result.columns),
+        row_count: result.rowCount,
+        error: null,
+      });
+      setStatus(`${queryId}: ${result.rowCount} row(s).`);
     } catch (err) {
-      model.set('columns_json', '[]');
-      model.set('row_count', 0);
-      setStatus('Query failed — see .error');
-      setError(err);
+      setResult(queryId, {
+        columns: [],
+        row_count: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      setStatus(`${queryId}: failed — see its result's "error".`);
     }
   }
 
-  model.on('change:_query_seq', runQuery);
+  model.on('msg:custom', (msg: unknown) => {
+    const m = msg as Partial<RunQueryMessage>;
+    if (m.type === 'run_query' && m.query_id && m.sql !== undefined) {
+      void runQuery(m.query_id, m.sql);
+    }
+  });
 
   return () => {
     engine?.dispose();

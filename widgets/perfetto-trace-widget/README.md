@@ -2,10 +2,13 @@
 
 A [Perfetto](https://perfetto.dev) trace-processor widget for
 [anywidget](https://anywidget.dev): load a trace file in the browser
-(`trace_processor.wasm`, in a Web Worker), run SQL against it, and get the
-result as a pandas DataFrame in Python — with **no server on the Python
-side**. The trace is parsed and queried entirely client-side; only query
-results (typically small) cross the Python↔JS boundary.
+(`trace_processor.wasm`, in a Web Worker), run SQL against it, and get each
+query's result as its own polars DataFrame in Python — with **no server on
+the Python side**. The trace is parsed and queried entirely client-side;
+only query results (typically small) cross the Python↔JS boundary. Run as
+many independent queries as you like against the same loaded trace: each
+gets its own query id and its own DataFrame, so none of them overwrite each
+other.
 
 That "no server" property is the whole point: this widget works inside
 [marimo's `export html-wasm`](https://docs.marimo.io/guides/exporting/#export-to-wasm-powered-html)
@@ -40,18 +43,27 @@ widget = PerfettoTraceWidget()
 widget  # display it (Jupyter/marimo/Colab) — pick a trace file in its UI
 
 # once a trace is loaded in the widget:
-widget.run_query("select name, dur from slice order by dur desc limit 10")
-widget.to_dataframe()
+q1 = widget.run_query("select name, dur from slice order by dur desc limit 10")
+q2 = widget.run_query("select name from thread")  # independent of q1
+
+widget.to_dataframe(q1)  # this query's own DataFrame
+widget.to_dataframe(q2)  # unaffected by q1
+
+widget.to_dataframes()  # {query_id: DataFrame} for every query run so far
 ```
 
 `run_query()` is fire-and-forget: it tells the browser side to run the
-query and returns immediately, before the (async, in-browser) result is
-back — see its docstring. In a reactive notebook (marimo, or plain
-ipywidgets code observing the widget's traits) that's not a problem: a cell
-that calls `to_dataframe()` naturally re-runs once the result trait
-actually changes. In a plain script or a one-shot Jupyter cell, you'll need
-to wait for it yourself (poll `widget.status` or `widget.error`, or just
-re-run the cell after the UI shows a row count).
+query and returns a `query_id` immediately, before the (async, in-browser)
+result is back — see its docstring. In a reactive notebook (marimo, or
+plain ipywidgets code observing the widget's traits) that's not a problem:
+a cell that calls `to_dataframe(query_id)` naturally re-runs once that
+query's result actually lands. In a plain script or a one-shot Jupyter
+cell, you'll need to wait for it yourself (poll `widget.status` or
+`widget.error`, or just re-run the cell after the UI shows a row count).
+`to_dataframe()` returns an empty DataFrame for a `query_id` whose result
+hasn't landed yet, and raises `RuntimeError` if that query itself failed
+(e.g. a SQL error) — trace *loading* failures surface separately, via
+`widget.error`.
 
 ### marimo
 
@@ -62,15 +74,26 @@ from perfetto_trace_widget import PerfettoTraceWidget
 widget = mo.ui.anywidget(PerfettoTraceWidget())
 widget  # cell 1: display, pick a trace file
 
-widget.run_query("select name, count(*) as n from slice group by name order by n desc limit 10")
-widget  # cell 2: (re-)running this cell after the query lands shows updated `.value`
+query_id = widget.run_query(
+    "select name, count(*) as n from slice group by name order by n desc limit 10"
+)  # cell 2
 
-widget.to_dataframe()  # cell 3
+widget.to_dataframe(query_id)  # cell 3: re-runs once this query's result lands
 ```
 
-See [`examples/marimo_demo.py`](examples/marimo_demo.py) for a complete
-notebook, including how to `marimo export html-wasm` it into a fully
-static, shareable page.
+If a query is triggered from a button (`mo.ui.run_button()`), store its
+`query_id` in `mo.state()` rather than reassigning a plain variable: the
+cell that calls `run_query()` also depends on `widget` (since it reads
+`widget.run_query`), so it reruns again once the async result lands and
+changes one of the widget's synced traits — at which point an unguarded
+`query_id = widget.run_query(...) if button.value else None` would
+reset back to `None`, because `button.value` is only `True` on the run its
+own click triggered. Guard the call with `if button.value:` and only set
+the state inside that block, so a later, unrelated rerun leaves the
+previously-set id alone. See
+[`examples/marimo_demo.py`](examples/marimo_demo.py) for a complete
+notebook using this pattern for two independent queries, including how to
+`marimo export html-wasm` it into a fully static, shareable page.
 
 ### Configuring where the wasm comes from
 

@@ -13,8 +13,10 @@ def _():
         # Perfetto trace query, in a client-side notebook
 
         Pick a trace file below (it's parsed entirely in your browser by
-        `trace_processor.wasm` — nothing is uploaded anywhere), then edit
-        the SQL query in the next cell.
+        `trace_processor.wasm` — nothing is uploaded anywhere). Each
+        `run_query()` call below gets its own independent result: run as
+        many different queries as you like and pull out each one's own
+        DataFrame separately, without any of them overwriting each other.
 
         This notebook is designed to also work exported as a fully static
         page: `marimo export html-wasm examples/marimo_demo.py -o demo.html`.
@@ -35,36 +37,111 @@ def _(mo):
     return (widget,)
 
 
-@app.cell
-def _(mo):
-    sql = mo.ui.text_area(
-        value="select name, count(*) as n\nfrom slice\ngroup by name\norder by n desc\nlimit 10",
-        label="SQL",
-        full_width=True,
-    )
-    run_button = mo.ui.run_button(label="Run query")
-    mo.hstack([run_button], justify="start")
-    return run_button, sql
-
-
-@app.cell
-def _(run_button, sql, widget):
-    if run_button.value:
-        widget.run_query(sql.value)
-    return
-
-
 @app.cell(hide_code=True)
 def _(mo, widget):
     mo.md(f"**Error:** `{widget.error}`" if widget.error else f"_{widget.status}_")
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""## Query 1: top slice names by count""")
+    return
+
+
+@app.cell
+def _(mo):
+    # A run_button's `.value` is only True on the run its own click
+    # triggered -- it reads back False on any later, unrelated reactive
+    # rerun. Since the cell below also depends on `widget` (it calls
+    # `widget.run_query`), *every* widget trait change (e.g. the async
+    # result landing in `results_json`) reruns it too -- so the id has to
+    # live in `mo.state()` and only ever be *set* inside an `if` guard,
+    # never reassigned unconditionally, or that later rerun would wipe it
+    # back to None right as the result arrives.
+    get_top_slices_id, set_top_slices_id = mo.state(None)
+    return get_top_slices_id, set_top_slices_id
+
+
+@app.cell
+def _(mo):
+    run_top_slices = mo.ui.run_button(label="Run")
+    run_top_slices
+    return (run_top_slices,)
+
+
+@app.cell
+def _(run_top_slices, set_top_slices_id, widget):
+    if run_top_slices.value:
+        set_top_slices_id(
+            widget.run_query(
+                "select name, count(*) as n\n"
+                "from slice\n"
+                "group by name\n"
+                "order by n desc\n"
+                "limit 10"
+            )
+        )
+    return
+
+
+@app.cell
+def _(get_top_slices_id, widget):
+    _id = get_top_slices_id()
+    widget.to_dataframe(_id) if _id else None
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""## Query 2: threads, independent of query 1's result above""")
+    return
+
+
+@app.cell
+def _(mo):
+    get_threads_id, set_threads_id = mo.state(None)
+    return get_threads_id, set_threads_id
+
+
+@app.cell
+def _(mo):
+    run_threads = mo.ui.run_button(label="Run")
+    run_threads
+    return (run_threads,)
+
+
+@app.cell
+def _(run_threads, set_threads_id, widget):
+    if run_threads.value:
+        set_threads_id(widget.run_query("select utid, tid, name from thread limit 10"))
+    return
+
+
+@app.cell
+def _(get_threads_id, widget):
+    _id = get_threads_id()
+    widget.to_dataframe(_id) if _id else None
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        """
+        ## Everything so far
+
+        `to_dataframes()` returns every query's result to date, keyed by
+        its query_id — handy once you've fired off several.
+        """
+    )
+    return
+
+
 @app.cell
 def _(widget):
-    df = widget.to_dataframe()
-    df
-    return (df,)
+    widget.to_dataframes()
+    return
 
 
 if __name__ == "__main__":

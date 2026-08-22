@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "perfetto-trace-widget"
 version = "0.1.0"
-description = "Load a Perfetto trace in the browser (trace_processor.wasm) and query it into a pandas DataFrame, from Python — works in fully client-side notebooks (e.g. marimo's `export html-wasm`)."
+description = "Load a Perfetto trace in the browser (trace_processor.wasm) and query it into a polars DataFrame, from Python — works in fully client-side notebooks (e.g. marimo's `export html-wasm`)."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.9"
 dependencies = [
     "anywidget>=0.9",
     "traitlets>=5.0",
-    "pandas>=1.5",
+    "polars>=0.20",
 ]
 
 [project.urls]
