@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - uses: actions/setup-node@v4
         with:
@@ -24,6 +26,17 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+
+      - name: Sanity-check vendored wasm isn't an LFS pointer stub
+        run: |
+          f=vendor/trace_processor/trace_processor.wasm
+          if [ -f "$f" ]; then
+            size=$(stat -c%s "$f")
+            if [ "$size" -lt 1000000 ]; then
+              echo "::error::$f is only $size bytes — looks like an unresolved git-lfs pointer, not the real binary. Was actions/checkout run without lfs: true?"
+              exit 1
+            fi
+          fi
 
       - name: Assemble combined site
         run: |
