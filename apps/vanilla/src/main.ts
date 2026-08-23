@@ -1,5 +1,31 @@
 import {createEngine, EngineNotReadyError, type TraceEngine} from '@perfetto-wasm/engine';
 
+// Not yet in lib.dom.d.ts.
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+}
+
+// The browser only fires this once the page passes its installability
+// checks (manifest + service worker + icons, all wired up in
+// vite.config.ts) -- stash the event so the button can trigger the native
+// install prompt on demand instead of the browser's own (easy-to-miss) UI.
+const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
+let deferredInstallPrompt: BeforeInstallPromptEvent | undefined;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e as BeforeInstallPromptEvent;
+  installBtn.hidden = false;
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  await deferredInstallPrompt.prompt();
+  deferredInstallPrompt = undefined;
+  installBtn.hidden = true;
+});
+window.addEventListener('appinstalled', () => {
+  installBtn.hidden = true;
+});
+
 const fileInput = document.getElementById('trace-file') as HTMLInputElement;
 const statusEl = document.getElementById('trace-status')!;
 const sqlEl = document.getElementById('sql') as HTMLTextAreaElement;

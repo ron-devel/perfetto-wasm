@@ -34,5 +34,18 @@ npm run build          # builds both apps
 - Pull requests → a staging preview at `/pr-preview/pr-<n>/`, commented on
   the PR automatically.
 
+Both demos are installable PWAs (`vite-plugin-pwa`, `generateSW` mode): the
+service worker precaches the whole app shell *and* `trace_processor.wasm`
+itself, so after one visit the page installs from the browser's prompt (or
+the in-page "Install app" button) and keeps working with no network at all
+— picking and querying a trace file is entirely local anyway, so a fully
+offline install can do everything the online page can. Shared icon source
+files live in `assets/pwa-icons/`; each app copies them into its own
+`dist/` at build time (see `vite.config.ts` in each app — `publicDir` is
+already spoken for by the vendored wasm, so a plain `vite-plugin-static-copy`
+step handles the icons instead). Bump
+`workbox.maximumFileSizeToCacheInBytes` in both `vite.config.ts` files if
+`trace_processor.wasm` ever grows past 20MB.
+
 GitHub Pages must be configured to deploy from the `gh-pages` branch (repo
 Settings → Pages → Source → "Deploy from a branch" → `gh-pages` / `/`).

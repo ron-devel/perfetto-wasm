@@ -1,10 +1,35 @@
 <script lang="ts">
   import {createEngine, EngineNotReadyError, type TraceEngine, type QueryResultColumn} from '@perfetto-wasm/engine';
 
+  // Not yet in lib.dom.d.ts.
+  interface BeforeInstallPromptEvent extends Event {
+    prompt(): Promise<void>;
+  }
+
   let engine: TraceEngine | undefined;
   let status = $state('');
   let sql = $state('select name from slice limit 10');
   let columns: ReadonlyArray<QueryResultColumn> = $state([]);
+
+  // The browser only fires this once the page passes its installability
+  // checks (manifest + service worker + icons, all wired up in
+  // vite.config.ts) -- stash the event so the button can trigger the
+  // native install prompt on demand instead of the browser's own
+  // (easy-to-miss) UI.
+  let deferredInstallPrompt: BeforeInstallPromptEvent | undefined = $state();
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e as BeforeInstallPromptEvent;
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = undefined;
+  });
+
+  async function install() {
+    if (!deferredInstallPrompt) return;
+    await deferredInstallPrompt.prompt();
+    deferredInstallPrompt = undefined;
+  }
 
   async function getEngine(): Promise<TraceEngine> {
     if (engine === undefined) {
@@ -50,6 +75,9 @@
   <p class="subtitle">
     Same trace_processor wasm engine as the vanilla demo, wired up with Svelte reactivity.
     <a href="../">← vanilla demo</a>
+    {#if deferredInstallPrompt}
+      <button type="button" onclick={install}>Install app</button>
+    {/if}
   </p>
 
   <section>
