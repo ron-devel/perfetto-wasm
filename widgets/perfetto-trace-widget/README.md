@@ -99,7 +99,10 @@ own click triggered. Guard the call with `if button.value:` and only set
 the state inside that block, so a later, unrelated rerun leaves the
 previously-set id alone. See
 [`examples/marimo_demo.py`](examples/marimo_demo.py) for a complete
-notebook using this pattern for two independent queries.
+notebook using this pattern for two independent queries, plus a chart of
+one query's result built with
+[pyobsplot](https://juba.github.io/pyobsplot/) (`pip install pyobsplot`
+-- it takes the polars DataFrame from `to_dataframe()` directly).
 
 To turn that into a fully static, shareable page with `marimo export
 html-wasm`, use [`examples/marimo_demo_wasm.py`](examples/marimo_demo_wasm.py)

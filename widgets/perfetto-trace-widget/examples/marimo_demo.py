@@ -97,6 +97,49 @@ def _(get_top_slices_id, widget):
 
 @app.cell(hide_code=True)
 def _(mo):
+    mo.md(
+        """
+        ### Same result, charted
+
+        [pyobsplot](https://juba.github.io/pyobsplot/) wraps Observable
+        Plot as its own anywidget -- it takes the polars DataFrame from
+        `to_dataframe()` directly (no pandas conversion needed) and
+        renders straight from it, so this chart updates the same way the
+        table above does: re-run the cell above's query and this one
+        picks up the new result on its own.
+
+        (If this shows a red "missing a default export" error instead of
+        a chart, that's a known intermittent race in marimo's own
+        anywidget module loader on pyobsplot's ~1.4MB bundle -- unrelated
+        to this widget. Re-running the cell below clears it.)
+        """
+    )
+    return
+
+
+@app.cell
+def _(get_top_slices_id, widget):
+    from pyobsplot import Plot
+
+    _id = get_top_slices_id()
+    _df = widget.to_dataframe(_id) if _id else None
+    (
+        Plot.plot(
+            {
+                "marks": [Plot.barX(_df, {"x": "n", "y": "name", "sort": {"y": "-x"}})],
+                "marginLeft": 140,
+                "x": {"label": "count"},
+                "y": {"label": None},
+            }
+        )
+        if _df is not None and _df.height > 0
+        else None
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md("""## Query 2: threads, independent of query 1's result above""")
     return
 
